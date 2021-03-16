@@ -1,0 +1,568 @@
+---
+title: "Time Series Forecast"
+author: "ma-haoran"
+date: "2021/3/16"
+output: 
+  html_document: 
+    toc: yes
+    theme: paper
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,warning = FALSE,message = FALSE)
+```
+
+```{r}
+
+library(data.table)
+library(tidyverse)
+library(fpp3)
+library(ggthemes)
+library(plotly)
+```
+
+
+## About
+
+This report is produced by R, an elegant programming language for getting data, tidy data, statistics, constructing models and data visualization.
+
+Since I write the reports all by myself without external editor, please be generous if any mistake happened.
+
+Welcome to view my code on **[github_ma-Haoran](https://github.com/ma-haoran/Time-Series-Forecast)** to check everything including loading data, data visualization, building time series models and related mathematical formulas, etc.
+
+My E-mail: **mhrdyx@126.com**
+
+## Forecast the National Passenger Traffic in China
+
+China is the country with the largest traffic passenger scale around the world. It could affect national economy through tourism industry, transportation, communications and so on. Operators in industries like trains, airlines, hotels are especially interested in this data. Thus forecast on the national passenger traffic is meaningful. However, it is tricky to build effective forecast models because of complex external factors such as COVID-19, which, obviously, has a strong impact on traffic passenger. Nonetheless, since the forecast is important, it is worthwhile to give a try.
+
+
+
+
+## Getting Data
+
+The historical Monthly data on passenger traffic of China is downloaded from National Bureau of Statistics. View details at <https://data.stats.gov.cn/english/easyquery.htm?cn=A01>. 
+
+
+####
+Preview the 5 first lines of raw data:
+```{r}
+rawdata<-fread("PassengerTraffic.csv")
+head(rawdata,5)
+```
+
+
+
+## Processing Data and Exploratory Analysis
+
+Extract time and passenger traffic information regardless transportation type, tidy data to fit the time series table format. 
+
+Supplement missing values existing in "current period" with the difference between current "accumulated" and previous "accumulated".
+
+Below is the first 10 lines of tidy data:
+
+```{r}
+train <- rawdata[-1, 1:5] %>%
+    mutate(Month = dmy(paste("1", Month, sep = " ")),
+           Month = yearmonth(Month)) %>%
+    tsibble(index = Month)%>%
+    filter(year(Month)>=2010)%>%
+    arrange(desc(Month))
+
+names(train)[-1]<-c("Current_Period"," Accumulated ",
+              "Growth_Rate","Accumulated_Growth_Rate"  )
+
+# Calculate the NA value
+na.row<-which(is.na(train[,2]))[]
+train[na.row,2]<-train[na.row,3]-train[na.row-1,3]
+
+names(train)[-1]<-c("Current_Period"," Accumulated ",
+              "Growth_Rate","Accumulated_Growth_Rate"  )
+
+head(train)
+
+```
+
+####
+
+Plot the monthly traffic to observe the patterns in data structure.
+
+Here apply a $\log(y)$ transformation to decrease the fluctuation.
+
+Below is an interactive plot for data visualization.
+
+```{r}
+p<-train%>%
+ggplot(aes(x=Month,y=log(Current_Period)))+
+    geom_line()+
+    labs(title ="Monthly Data on Passenger Traffic" ,
+         y="log(Current_Period_Passenger(0000))")
+    plotly::ggplotly(p)
+```
+
+####
+A significant annual seasonality shows in plot, which is the Spring Festival travel rush. 
+
+Regardless seasonality, the trend increased before 2013 but tended to decrease after 2014.
+
+####    
+It is worthwhile to emphasize 2 particular points:
+
+1. In Jan 2018, an expected Spring Festival transportation peak does not show in data. Since the data is endorsed by National Bureau of Statistics of China, we do not doubt the accuracy of the point. Nonetheless, the disappeared seasonality in 2018 makes the forecast more difficult.
+
+2. Covid-19 firstly appeared in Wuhan on Dec 2019 and began to spread across the country.  To protect citizens, Government issued a quarantine policy which led to a sharp decline in passenger traffic. As a result, the emergency disturbed the regular trend and seasonality that historical traffic data could on play a limit row in forecast. To deal with the special issue, it is necessary to put more factors, such as corona virus data of China, into regression.
+
+####
+
+
+Getting and tidy Covid-19 data:
+
+Daily Covid-19 data downloaded from <https://www.kaggle.com/sudalairajkumar/novel-corona-virus-2019-dataset>
+
+
+####
+Preview raw Covid-19 data
+```{r}
+ncov<-fread("ncov.csv")
+
+head(ncov)
+
+
+```
+
+
+####
+
+Preview Processed covid-19 data
+```{r}
+setkey(ncov,Country/Region)
+ncov<-ncov["Mainland China"]
+ncov<-ncov[,.(ObservationDate,Confirmed,Deaths,Recovered)]
+ncov<-ncov[,lapply(.SD,sum),by=ObservationDate]
+ncov<-tibble(ncov)%>%
+    mutate(Month=yearmonth(mdy(ObservationDate)))%>%
+     group_by(Month)%>%
+    filter(ObservationDate==max(ObservationDate))%>%
+    select(-ObservationDate)%>%
+    ungroup()
+
+ Covid<-ncov%>%
+     mutate(Confirm=difference(ncov$Confirmed),
+           Deaths=difference(ncov$Deaths),
+           Recover=difference(ncov$Recovered))%>%
+     select(Confirm,Deaths,Recover,Month)
+ Covid[1,]<-ncov[1,]
+ head(Covid)
+    
+
+```
+## Models
+
+### Constuct and filter independent variables
+ 
+Until now traffic and epidemic data are available. However, building variables containing information which has a strong correlation with dependent variable (numbers of passengers in this case) could contribute to the accuracy of model. Thus it is reasonable to build two dummy variables here:
+
+
+1. <break> : indicate whether there is a confirmed infection cases,
+"1" means confirmed, 0 means no one confirm.
+
+
+2. <knot> : according to the exploratory of passenger traffic data above, both the trend and seasonality changed on Dec 2017 ,Dec 2019 as well as Dec 2020. Thus add knots as at the two as an variable.
+
+####
+Preview the first 5 rows of train data.
+
+```{r}
+train<-train%>%
+    left_join(Covid,by="Month")
+train<-train%>%
+    mutate_if(is.numeric,funs(ifelse(is.na(.),0,.)))%>%
+    mutate(Passenger=Current_Period)%>%
+    select(Passenger,Confirm,Deaths,Recover)%>%
+    relocate(Month)%>%
+    mutate(Break=pmin(Confirm,1))
+
+train[which(train$Month==yearmonth(ymd(20191208))),"Break"]=1
+#train<-train%>%mutate(Break=factor(Break))
+
+train<-train%>%
+  mutate(knot=case_when(
+    Month==yearmonth(ymd(20171201))~1,
+    Month== yearmonth(ymd(20191201))~1,
+    Month== yearmonth(ymd(20201201))~1,
+    TRUE~0
+  ))
+  #mutate(knot=factor(knot))
+
+    
+head(train,5)
+```
+
+
+
+####
+Now 6 variables (Month, Confirm, Deaths, Recover, Break, Knot) could be used to build models to forecast Passenger. Rather than put all these variables into models, it is elegant to select ones which affect Passenger significantly, or the model would become complex and lead to over fitting. Besides, redundant variables would distort the correlations within the model.
+
+####
+
+**Analysis of variance (ANOVA)** enables to determine which factors have a statistical influence on the given data set. In its simplest form, ANOVA provides a statistical test of whether two or more population means are equal, and therefore generalizes the t-test beyond two means. Factors with $Pr < 0.05$ are statistical significant.
+
+
+####
+
+ANOVA:
+
+
+First test all the factors:
+```{r}
+lm.mod1<-lm(data=train,log(Passenger)~Month+Confirm+
+                Recover+Deaths+
+               lag(Confirm,1)+Break+knot+1)
+anova(lm.mod1)
+```
+
+
+
+####
+Rule out Deaths and lag(Confirm,1), then perform ANOVA, $Pr$ get better.
+```{r}
+lm.mod2<-lm(data=train,log(Passenger)~Month+Confirm+Recover+Break+
+               knot+1)
+anova(lm.mod2)
+```
+
+
+
+####
+The purpose is to build a model for forecasting rather than for explaining the relationship between variables. So I would put the accuracy as first priority at the cost of losing some interpretability. In this case, I prefer to make a $log()$ transformation on $Passenger$ and take $knot$ into regression to improve the model performance. When test residuals and forecast, $log(Passenger)$ would be reversed to the initial format, $Passenger$.
+
+
+
+### Seasonal-Trend decomposition
+
+STL is a versatile and robust method for decomposing time series. STL is an acronym for “Seasonal and Trend decomposition using Loess,” while Loess is a method for estimating nonlinear relationships. 
+
+```{r}
+p<-train%>%
+  model(
+    STL(log(Passenger) ~ season(period=12),
+        robust = TRUE)
+  ) %>%
+  components() %>%
+  autoplot() + labs(x = "Month")
+
+ggplotly(p)
+```
+
+
+####
+According to STL decomposition:
+
+*Trend declined from Jul 2013, but got smoother since Aug 2014. Also, a sharp declination took place from Oct 2019.
+
+*The seasonality period is 12 months.
+
+*Notably, the remainder was led by the seasonality disappearance in 2018 and the occurrence of Covid-19 at the end of 2019.
+
+
+
+### Relationship between traffic passenger and epidemic
+
+Apply $log()$ to each variable for plot. 
+```{r}
+p<-train %>%   
+    filter(year(Month) >= 2020) %>%
+    pivot_longer(Passenger:Recover) %>%
+    ggplot(aes(x = Month, y = log(value))) +
+    geom_line() +
+    facet_wrap(vars(factor(
+        name, levels =
+            c("Passenger", "Confirm", "Deaths", "Recover")
+    )), scales = "free_y", nrow = 4) +
+    theme(legend.text = NULL) +
+    labs(y="Log ()", title = "Traffic Passengers Under Covid-19")+
+    theme_economist_white()
+
+ggplotly(p)
+
+```
+
+
+####
+A negative correlation between $Log(Passenger)$ and $log(Confirm)$ showed in the plot above.
+
+
+
+####
+A 3D scatter plot for visualization:
+```{r}
+
+fig<-train %>%   
+    filter(year(Month) >= 2019)%>%
+  mutate('log(Passenger)'=log(Passenger),
+         Confirm=(Confirm),
+         Recover=(Recover),
+         Break=factor(Break)
+         )
+fig<-plot_ly(fig,y=~log(Confirm),x=~Recover,z=~log(Passenger))
+
+fig
+```
+
+
+### Choose Models
+
+In this case, a good model should:
+
+1. Capture the trend, seasonality of the data.
+
+2. Model the relationship between Passenger and Covid-19 epidemic.
+
+####
+The models I choose:
+
+#####
+1. A harmonic model that describes the seasonality. Such as models using Fourier terms could capture the seasonality:
+$$Y_t = A_0 + \sum_{i = 1}^{n}
+[{A_j}\cos(2{\pi}{f_i}t)+{B_j}\sin(2{\pi}{f_i}t)]$$
+
+
+where,
+*$Y_t$ is the dependent factor, $Passenger$ in this case;
+*$f_i$ is the frequency of seasonality, $1/12$ in this case;
+*$j$ is the amount of pairs of Fourier items;
+*$A_0$, $A_j$, $B_j$ are constants which could be obtained by fitting observing data.
+
+######
+2. A time series multiple linear regression where epidemic predictor and knots could catch the deterministic trend. The general form of a multiple regression model is $$y_t = \beta_0 + \beta_1 x_{1,t} + \beta_2 x_{2,t} + \cdots + \beta_kx_{k,t} + \varepsilon_t$$
+
+* $y_t$ is the variable we want to predict: the ``response'' variable
+* Each $x_{j,t}$ is numerical and is called a ``predictor''.
+ They are usually assumed to be known for all past and future times.
+* The coefficients $\beta_1,\dots,\beta_k$ measure the effect of each
+predictor after taking account of the effect of all other predictors
+in the model.
+* $\varepsilon_t$ is a white noise error term
+
+######
+3. The last thing is about residuals. If the model with two components mentioned above can effectively fit the data, then the residuals should be in independent distribution with 0 $mean$ and 0  auto-covariance ($ACF$), such as a normal distribution. However, when the residuals are not independent or in weak correlation, it is better to build a stochastic model such as $ARIMA$ model to fit the residuals. ARMA Model:
+
+ $$y_{t}= c + \phi_{1}y_{t - 1} + \cdots + \phi_{p}y_{t - p}
+        + \theta_{1}\varepsilon_{t - 1} + \cdots + \theta_{q}\varepsilon_{t - q} + \varepsilon_{t}$$
+
+where $\varepsilon_t$ is white noise, $c$ is the mean of observed series, $\phi$ and $\theta$ are constant coefficients.
+
+
+Comparing ARMA(p,q), ARIMA(p,d,q) has an extra parameter - I, $d =$ degree of first differencing involved.  (See detail at [ARIMA](https://baike.baidu.com/item/ARIMA%E6%A8%A1%E5%9E%8B/10611682?fr=aladdin))
+
+####
+
+#### Find the proper $j$: Pairs of Fourier terms for Harmonic Model
+
+Try $j=1,2,3,4,5,6$ with $ARIMA$ error on $log(Passenger)$. Set $ARIMA(p,d,q)(P,D,Q)_s$ $P=D=Q=0$ to force Fourier describe all the seasonality. Typically, $j$ with least $AICc$ indicate means a better fit.
+
+```{r}
+harmonic.arima.mod <- model(
+  train,
+  `K = 1` = ARIMA(log(Passenger) ~ fourier(K = 1) + PDQ(0, 0, 0)),
+  `K = 2` = ARIMA(log(Passenger) ~ fourier(K = 2) + PDQ(0, 0, 0)),
+  `K = 3` = ARIMA(log(Passenger)  ~ fourier(K = 3) + PDQ(0, 0, 0)),
+  `K = 4` = ARIMA(log(Passenger)  ~ fourier(K = 4) + PDQ(0, 0, 0)),
+  `K = 5` = ARIMA(log(Passenger)  ~ fourier(K = 5) + PDQ(0, 0, 0)),
+  `K = 6` = ARIMA(log(Passenger)  ~ fourier(K = 6) + PDQ(0, 0, 0))
+  )
+
+harmonic.arima.mod%>%
+  forecast(new_data=filter(train,year(Month)>=2015)) %>%
+  autoplot(filter(train,year(Month)>=2015), level = NULL) +
+  facet_wrap(vars(.model), ncol = 2) +
+  guides(colour = FALSE,
+         fill = FALSE,
+         level = FALSE) +
+  geom_label(aes(
+    x = yearmonth("2018 Jan"),
+   y=2e+06, 
+    label = paste0("AICc = ", format(AICc))
+  ), 
+  data = glance(harmonic.arima.mod)) +
+  labs(title = "harmonic.arima.mod",
+       y = "Passenger Traffic (0000)")
+
+
+```
+
+
+
+####
+We get the least $AICc=146.53$ when $K=6$, so 6 pairs of Fourier terms should be fitted in the model.
+
+
+
+
+### Build Models
+
+#### Model 1 : TSLM Model with Harmonic Components
+
+$$y_t = \beta_0 + \beta_1 x_{1,t} + \beta_2 x_{2,t} + \cdots + \beta_kx_{k,t} +\sum_{i = 1}^{n}
+[{A_j}\cos(2{\pi}{f_i}t)+{B_j}\sin(2{\pi}{f_i}t)] +\varepsilon_t$$
+
+
+```{r}
+tslm.mod <- train %>%
+    model(TSLM(log(Passenger) ~ Confirm+Recover+Break+knot+fourier(K = 6)))
+tslm.mod %>%
+    forecast(new_data = filter(train, year(Month) >= 2015)) %>%
+    autoplot(level = 95,alpha=0.7) +
+    autolayer(filter(train, year(Month) >= 2013)) +
+    labs(title = "tslm.mod")
+```
+
+
+####
+The blue curve is the fit curve, 95% confidence interval is also plotted above. For the peak point for each annual, however, forecast is much higher than real data.
+
+
+####
+See the details of the model:
+```{r}
+report(tslm.mod)
+```
+
+####
+Pr(>|t|) gives the p-value for that t-test (the proportion of the t distribution at that df which is greater than the absolute value of t statistic). It is rational to accept the coefficients since most of $P-value<0.05$ except two.
+
+
+The Adjusted R-squared=0.8221, indicates the model is capable of explaining 82.21% variance of the historical data.
+
+
+####
+
+Test the residuals:
+
+
+```{r}
+tslm.mod%>%gg_tsresiduals()
+```
+
+
+####
+ACF significant above 0, indicates the residual autocorrelation is statistically significant. Thus should construct a stochastic model to fit the residuals. Applying $ARIMA$ model for residuals in this case.
+
+####
+#### Model 2 : TSLM Model with Harmonic Components + ARIMA()
+
+
+Set $ARIMA(p,d,q)(P,D,Q)_s$ $P=D=Q=0$ to force Fourier describe all the seasonality. Set d=0 so the differencing will be dealed by linear regression. In this case the model could be written as:
+$$y_t = \beta_0 + \beta_1 x_{1,t} + \beta_2 x_{2,t} + \cdots + \beta_kx_{k,t} +\sum_{i = 1}^{n}
+[{A_j}\cos(2{\pi}{f_i}t)+{B_j}\sin(2{\pi}{f_i}t)] +\eta_t$$
+
+$$\eta_{t}= c + \phi_{1}\eta_{t - 1} + \cdots + \phi_{p}\eta_{t - p}
+         + \theta_{1}\varepsilon_{t - 1} + \cdots + \theta_{q}\varepsilon_{t - q} + \varepsilon_{t}$$
+
+
+```{r}
+harmonic.regression.arima.mod <- train%>%
+    model(ARIMA(
+        log(Passenger)~PDQ(0,0,0)+pdq(d=0)+
+            Confirm+Break+Recover+knot+
+            fourier(K=6)
+    ))
+
+harmonic.regression.arima.mod %>%
+    forecast(new_data = filter(train, year(Month) >= 2015)) %>%
+    autoplot(alpha=0.7,level=95) +
+    autolayer(filter(train, year(Month) >= 2013)) +
+    labs(title = "harmonic.regression.arima.mod")
+
+```
+
+
+####
+The model fit well except the peak on Jan 2016.
+
+####
+Test the residuals :
+
+####
+```{r}
+harmonic.regression.arima.mod%>%gg_tsresiduals()
+
+```
+
+
+####
+ACF is not significant different from 0, so cannot find evidence to prove the residual autocorrelation is statistically significant. Thus model 2 is better on its residuals.
+
+####
+Further implement Ljung_Box test on the residuals to buttress the idea.
+
+####
+
+Ljung_Box test:
+
+$H_0$: The series is not significant from a white noise.
+
+```{r}
+harmonic.regression.arima.mod%>%
+  augment()%>%
+  features(.innov,ljung_box)
+
+
+```
+
+####
+$P-value=0.76>0.09$, so cannot reject Null hypothesis. Model 2 indeed fit better.
+
+
+
+## 12-Month-Forecast
+
+Finally we could make a forecast, however, whether the forecast is accuracy depend on the future situaion of Covid-19. Here I make a forecast under 3 different scenarios:
+
+####
+
+1. A scenario without Covid-19 breaks in mainland China.
+
+2. A scenario where Covid-19 breaks, with 1 patient confirm and 1 patient recover everyday.
+
+3. A scenario where Covid-19 breaks, with 1 patient confirm and 1 patient recover everyday. However, public emergencies, such as wide mandatory isolation, closing city, etc, will arise in the future. The emergency would be reflected as a knot in the model.
+
+
+####
+
+View the forecast:
+
+```{r}
+future_scenarios <- scenarios(
+  
+  Without_Covid19=new_data(train,12)%>% 
+    mutate(Confirm=0,Break=0,knot=0,Recover=0),
+  
+  With_Covid19 = new_data(train, 12) %>% 
+    mutate(Confirm=1,Break=1,knot=0,Recover=1),
+  
+   With_Covid19_Emergency = new_data(train, 12) %>% 
+    mutate(Confirm=1,Break=1,knot=1,Recover=1),
+  
+  names_to = "Scenario"
+)
+
+fc<-tslm.mod%>%
+  forecast(future_scenarios)
+
+fc
+  
+```
+
+####
+
+Plot the forecast:
+
+```{r}
+fc %>%
+  autoplot(level = 95) +
+  autolayer(filter(train, year(Month) >= 2016)) +
+  labs(title = "Scenario Forecast on Traffic Passenger in China" ,
+       y = "Traffic Passenger (0000)")
+
+```
