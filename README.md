@@ -42,7 +42,7 @@ I was a staff associate in *Ernst & Young Hua Ming LLP Wuhan Branch* as an indep
 
 - An IPO audit of a real estate company listed in Hong Kong, completed 9 audit procedures on 9 subsidiaries.
 
-- Audit of a French automotive parts company, from work-through test to substantical procesures, test of control, etc. I independently complete 13 working papers of different account subjects.
+- Audit of a French automotive parts company, from work-through test to substantial procedures, test of control, etc. I independently complete 13 working papers of different account subjects.
 
 - An annual consolidated financial statements audit of a famous joint venture automobile company, and implemented digital audit. Involving 
 complex accounting treatment and project management since I was a member in primary team.
