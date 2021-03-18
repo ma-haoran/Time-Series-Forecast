@@ -163,11 +163,11 @@ ncov<-tibble(ncov)%>%
 Until now traffic and epidemic data are available. However, building variables containing information which has a strong correlation with dependent variable (numbers of passengers in this case) could contribute to the accuracy of model. Thus it is reasonable to build two dummy variables here:
 
 
-1. <break> : indicate whether there is a confirmed infection cases,
+1. “break” : indicate whether there is a confirmed infection cases,
 "1" means confirmed, 0 means no one confirm.
 
 
-2. <knot> : according to the exploratory of passenger traffic data above, both the trend and seasonality changed on Dec 2017 ,Dec 2019 as well as Dec 2020. Thus add knots as at the two as an variable.
+2. “knot” : according to the exploratory of passenger traffic data above, both the trend and seasonality changed on Dec 2017 ,Dec 2019 as well as Dec 2020. Thus add "knot" at the three inflection points as an variable.
 
 ####
 Preview the first 5 rows of train data.
@@ -201,7 +201,7 @@ head(train,5)
 
 
 ####
-Now 6 variables (Month, Confirm, Deaths, Recover, Break, Knot) could be used to build models to forecast Passenger. Rather than put all these variables into models, it is elegant to select ones which affect Passenger significantly, or the model would become complex and lead to over fitting. Besides, redundant variables would distort the correlations within the model.
+Now 6 variables (Month, Confirm, Deaths, Recover, Break, Knot) could be used to build models for forecasting "Passenger". Rather than put all these variables into models, it is wise to select ones which affect Passenger significantly, or the model would become complex and lead to over fitting. Besides, redundant variables would distort the correlations within the model.
 
 ####
 
@@ -234,7 +234,7 @@ anova(lm.mod2)
 
 
 ####
-The purpose is to build a model for forecasting rather than for explaining the relationship between variables. So I would put the accuracy as first priority at the cost of losing some interpretability. In this case, I prefer to make a $log()$ transformation on $Passenger$ and take $knot$ into regression to improve the model performance. When test residuals and forecast, $log(Passenger)$ would be reversed to the initial format, $Passenger$.
+The purpose is to build a model for forecasting rather than for explaining the relationship between variables. So I would put the accuracy as first priority at the cost of losing some interpretability. In this case, I prefer to make a $log()$ transformation on $Passenger$ and take $knot$ into regression to improve forecast performance. When test residuals and forecast, $log(Passenger)$ would be reversed to the initial format, $Passenger$.
 
 
 
@@ -262,7 +262,7 @@ According to STL decomposition:
 
 *The seasonality period is 12 months.
 
-*Notably, the remainder was led by the seasonality disappearance in 2018 and the occurrence of Covid-19 at the end of 2019.
+*Notably, the remainder was led by the seasonality disappeared in 2018, and the occurrence of Covid-19 at the end of 2019.
 
 
 
@@ -294,7 +294,7 @@ A negative correlation between $Log(Passenger)$ and $log(Confirm)$ showed in the
 
 
 ####
-A 3D scatter plot for visualization:
+An interactive 3D scatter plot for visualization:
 ```{r}
 
 fig<-train %>%   
@@ -336,7 +336,7 @@ where,
 ######
 2. A time series multiple linear regression where epidemic predictor and knots could catch the deterministic trend. The general form of a multiple regression model is $$y_t = \beta_0 + \beta_1 x_{1,t} + \beta_2 x_{2,t} + \cdots + \beta_kx_{k,t} + \varepsilon_t$$
 
-* $y_t$ is the variable we want to predict: the ``response'' variable
+* $y_t$ is the variable we want to predict: the "Passenger" .
 * Each $x_{j,t}$ is numerical and is called a ``predictor''.
  They are usually assumed to be known for all past and future times.
 * The coefficients $\beta_1,\dots,\beta_k$ measure the effect of each
@@ -353,13 +353,13 @@ in the model.
 where $\varepsilon_t$ is white noise, $c$ is the mean of observed series, $\phi$ and $\theta$ are constant coefficients.
 
 
-Comparing ARMA(p,q), ARIMA(p,d,q) has an extra parameter - I, $d =$ degree of first differencing involved.  (See detail at [ARIMA](https://baike.baidu.com/item/ARIMA%E6%A8%A1%E5%9E%8B/10611682?fr=aladdin))
+Comparing to ARMA(p,q), ARIMA(p,d,q) has an extra parameter - $d$ degree of first differencing involved.  (See detail at [ARIMA](https://baike.baidu.com/item/ARIMA%E6%A8%A1%E5%9E%8B/10611682?fr=aladdin))
 
 ####
 
 #### Find the proper $j$: Pairs of Fourier terms for Harmonic Model
 
-Try $j=1,2,3,4,5,6$ with $ARIMA$ error on $log(Passenger)$. Set $ARIMA(p,d,q)(P,D,Q)_s$ $P=D=Q=0$ to force Fourier describe all the seasonality. Typically, $j$ with least $AICc$ indicate means a better fit.
+Try $j=1,2,3,4,5,6$ with $ARIMA$ error on $log(Passenger)$. Set $ARIMA(p,d,q)(P,D,Q)_s$ $P=D=Q=0$ to force Fourier describe all the seasonality. Typically, $j$ with least $AICc$ indicates a better fit.
 
 ```{r}
 harmonic.arima.mod <- model(
@@ -394,7 +394,7 @@ harmonic.arima.mod%>%
 
 
 ####
-We get the least $AICc=146.53$ when $K=6$, so 6 pairs of Fourier terms should be fitted in the model.
+We get the least $AICc=146.53$ when $K=6$, so $6$ pairs of Fourier terms should be fitted in the model.
 
 
 
@@ -429,7 +429,7 @@ report(tslm.mod)
 ```
 
 ####
-Pr(>|t|) gives the p-value for that t-test (the proportion of the t distribution at that df which is greater than the absolute value of t statistic). It is rational to accept the coefficients since most of $P-value<0.05$ except two.
+$Pr(>|t|)$ gives the p-value for that t-test (the proportion of the t distribution at that df which is greater than the absolute value of t statistic). It is rational to accept the coefficients since most of $P-value<0.05$ except two.
 
 
 The Adjusted R-squared=0.8221, indicates the model is capable of explaining 82.21% variance of the historical data.
@@ -446,7 +446,7 @@ tslm.mod%>%gg_tsresiduals()
 
 
 ####
-ACF significant above 0, indicates the residual autocorrelation is statistically significant. Thus should construct a stochastic model to fit the residuals. Applying $ARIMA$ model for residuals in this case.
+However, ACF significant above 0, indicates the residual autocorrelation is statistically significant. Thus should construct a stochastic model to fit the residuals. Applying $ARIMA$ model for residuals in this case.
 
 ####
 #### Model 2 : TSLM Model with Harmonic Components + ARIMA()
@@ -566,3 +566,8 @@ fc %>%
        y = "Traffic Passenger (0000)")
 
 ```
+
+
+#####
+
+Welcome to view my code for this report on **[github_ma-Haoran](https://github.com/ma-haoran/Time-Series-Forecast)**
